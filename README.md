@@ -1,1 +1,3 @@
-# hbase-common reads/writes hbase by HBaseApi, PhoenixUtil,SparkHbaseHelper 
+# hbase-common 
+
+reads/writes hbase by HBaseApi, PhoenixUtil,SparkHbaseHelper 
