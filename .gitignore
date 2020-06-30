@@ -1,0 +1,46 @@
+push.sh
+### Scala template
+*.class
+*.log
+
+### SBT template
+# Simple Build Tool
+# http://www.scala-sbt.org/release/docs/Getting-Started/Directories.html#configuring-version-control
+.cache
+.history
+.lib/
+dist/*
+target/
+lib_managed/
+src_managed/
+project/boot/
+project/plugins/project/
+
+# Scala-IDE specific
+.scala_dependencies
+.worksheet
+.idea
+*.iml
+
+# Java-IDE specific
+out/
+output
+*.csv
+*.crc
+tmp
+
+# redis
+*.rdb
+
+#test files
+*.txt
+*.xls
+*.xlsx
+
+spring-boot-common.iml
+
+src/main/resources/application-local.properties
+src/main/resources/application.properties
+src/main/resources
+
+metastore_db
