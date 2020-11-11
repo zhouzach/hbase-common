@@ -5,7 +5,7 @@ import java.sql.{Connection, PreparedStatement, ResultSet, SQLException}
 import com.alibaba.druid.pool.DruidDataSource
 import org.slf4j.LoggerFactory
 
-object PhoenixUtil {
+object HiveUtil {
 
   private val logger = LoggerFactory.getLogger(getClass)
   private val dataSource = new DruidDataSource()
@@ -141,8 +141,8 @@ object PhoenixUtil {
 
   def main(args: Array[String]): Unit = {
 
-    val driver = "org.apache.phoenix.jdbc.PhoenixDriver"
-    val url = "jdbc:phoenix:cdh1,cdh2,cdh3:2181"
+    val driver = "org.apache.hive.jdbc.HiveDriver"
+    val url = "jdbc:hive2://cdh4:10000"
     val username = ""
     val password = ""
 
@@ -156,11 +156,11 @@ object PhoenixUtil {
 //    }
 
     println()
-    val rs3 = connection.get.createStatement().executeQuery(s"""SELECT * FROM "ods.user_hbase5" """)
+    val rs3 = connection.get.createStatement().executeQuery(s"""SELECT * FROM dwd.bill limit 10 """)
     while (rs3.next()) {
       println(
         s"""
-          |${rs3.getString(1)}, ${rs3.getString(2)}, ${rs3.getString(3)}, ${rs3.getString(4)}
+          |${rs3.getLong(1)}, ${rs3.getString(2)}, ${rs3.getInt(3)}, ${rs3.getString(4)}
           |
           |
           |""".stripMargin)

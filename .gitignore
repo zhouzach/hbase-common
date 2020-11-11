@@ -1,4 +1,4 @@
-push.sh
+*.sh
 ### Scala template
 *.class
 *.log

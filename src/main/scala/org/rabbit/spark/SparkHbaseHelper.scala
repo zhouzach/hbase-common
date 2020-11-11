@@ -1,6 +1,6 @@
-package org.rabbit
+package org.rabbit.spark
 
-import config.SparkConfig
+import com.fasterxml.uuid.Generators
 import org.apache.hadoop.hbase.CellUtil._
 import org.apache.hadoop.hbase.client.{Delete, Put, Result}
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
@@ -8,33 +8,73 @@ import org.apache.hadoop.hbase.mapreduce.{TableInputFormat, TableOutputFormat}
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.hbase.{Cell, HBaseConfiguration}
 import org.apache.hadoop.mapreduce.Job
+import org.apache.log4j.{Level, Logger}
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
+import org.rabbit.config.SparkConfig
+import org.rabbit.models.UserData
 import org.slf4j.LoggerFactory
 
 import scala.reflect.ClassTag
 
 object SparkHbaseHelper {
   val logger = LoggerFactory.getLogger(this.getClass)
-  val sparkContext = SparkConfig.spark.sparkContext
+
+
+
+  //屏蔽不必要的日志显示在终端上
+//    Logger.getLogger("org.apache.spark").setLevel(Level.INFO)
 
 
   def main(args: Array[String]): Unit = {
 
+    val spark: SparkSession = SparkSession
+      .builder()
+      //    .enableHiveSupport()
+      .master("local")
+      .getOrCreate()
 
-    SparkHbaseHelper.getRawRDDByFamilyColumn(
-      SparkConfig.spark.sparkContext,
-      "ods.user_hbase5",
-      "cf",
-      "age"
-    )
-      .collect()
-      .foreach(u => println(u))
+
+
+    val tableName = "ods:user_hbase1"
+
+    //    SparkHbaseHelper.getRawRDDByFamilyColumn(
+    //      SparkConfig.spark.sparkContext,
+    //      "ods:user_hbase4",
+    //      "cf",
+    //      "age"
+    //    )
+    //      .collect()
+    //      .foreach(u => println(u))
+
+    val data = spark.sparkContext.parallelize(Seq(
+      UserData("lily", "female", 12, "2020-07-13 19:51:42.923"),
+      UserData("tom", "male", 22, "2020-06-13 19:51:42.923")
+    ))
+
+    val func = (user: UserData) =>{
+      val rowKey =  Generators.timeBasedGenerator().generate().toString
+      val put = new Put(Bytes.toBytes(rowKey))
+      put.addColumn(Bytes.toBytes("cf"), Bytes.toBytes("uid"), Bytes.toBytes(user.uid))
+      put.addColumn(Bytes.toBytes("cf"), Bytes.toBytes("sex"), Bytes.toBytes(user.sex))
+      put.addColumn(Bytes.toBytes("cf"), Bytes.toBytes("age"), Bytes.toBytes(user.age))
+      put.addColumn(Bytes.toBytes("cf"), Bytes.toBytes("created_time"), Bytes.toBytes(user.created_time))
+
+      (new ImmutableBytesWritable, put)
+    }
+
+    putRDD[UserData](tableName,data,func)
+
+    spark.stop()
+
+
+
 
 
   }
+
   def getTableName(orgName: String, tableName: String): String = {
     s"$orgName:$tableName"
   }
@@ -49,9 +89,9 @@ object SparkHbaseHelper {
                              ): RDD[Result] = {
     val hConf = HBaseConfiguration.create()
     hConf.set("hbase.mapreduce.inputtable", tableName)
-//    hConf.addResource("core-site.xml")
-//    hConf.addResource("hbase-site.xml")
-//    hConf.addResource("hdfs-site.xml")
+    //    hConf.addResource("core-site.xml")
+    //    hConf.addResource("hbase-site.xml")
+    //    hConf.addResource("hdfs-site.xml")
     hConf.set("hbase.mapreduce.scan.row.start", startRow)
     hConf.set("hbase.mapreduce.scan.row.stop", stopRow)
     //    hConf.set(TableInputFormat.SCAN_COLUMN_FAMILY, columnFamily)
@@ -59,15 +99,15 @@ object SparkHbaseHelper {
     sparkContext.newAPIHadoopRDD(hConf, classOf[TableInputFormat], classOf[ImmutableBytesWritable], classOf[Result]).map(_._2)
   }
 
-  def getRDD[T: ClassTag](
-                 tableName: String,
-                 columnFamily: String,
-                 qualifier: String,
-                 startRow: String,
-                 stopRow: String,
-                 toT: Array[Byte] => T
-               ): RDD[T] ={
-    val rawRDD = getRawRDD(tableName, startRow, stopRow)
+  def getRDD[T: ClassTag](spark: SparkSession,
+                           tableName: String,
+                           columnFamily: String,
+                           qualifier: String,
+                           startRow: String,
+                           stopRow: String,
+                           toT: Array[Byte] => T
+                         ): RDD[T] = {
+    val rawRDD = getRawRDD(spark,tableName, startRow, stopRow)
     rawRDD.map(data => {
       toT(data._2.getValue(columnFamily.getBytes(), qualifier.getBytes()))
     })
@@ -75,64 +115,64 @@ object SparkHbaseHelper {
 
   // 只会扫描 'columns' 指定的那些列
   // 'columns' 都属于 'columnFamily'
-  def getRDD[T: ClassTag]( tableName: String,
-                           columnFamily: String,
-                           columns: List[String],
-                           startRow: String,
-                           stopRow: String,
-                           toT: Result => T): RDD[T] ={
+  def getRDD[T: ClassTag](spark: SparkSession,tableName: String,
+                          columnFamily: String,
+                          columns: List[String],
+                          startRow: String,
+                          stopRow: String,
+                          toT: Result => T): RDD[T] = {
     val hConf = HBaseConfiguration.create()
     hConf.set("hbase.mapreduce.inputtable", tableName)
     hConf.addResource("core-site.xml")
     hConf.addResource("hbase-site.xml")
     hConf.addResource("hdfs-site.xml")
-//    hConf.set("hbase.zookeeper.quorum", ConfigurationHelper.hbaseIp)
-//    hConf.set("hbase.zookeeper.property.clientPort", ConfigurationHelper.hbasePort)
-//    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
+    //    hConf.set("hbase.zookeeper.quorum", ConfigurationHelper.hbaseIp)
+    //    hConf.set("hbase.zookeeper.property.clientPort", ConfigurationHelper.hbasePort)
+    //    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
     hConf.set("hbase.mapreduce.scan.row.start", startRow)
     hConf.set("hbase.mapreduce.scan.row.stop", stopRow)
     hConf.set("hbase.mapreduce.scan.columns", constructCFandQualifier(columnFamily, columns))
 
-    val rawRDD: RDD[(ImmutableBytesWritable, Result)] = sparkContext.newAPIHadoopRDD(hConf, classOf[TableInputFormat], classOf[ImmutableBytesWritable], classOf[Result])
+    val rawRDD: RDD[(ImmutableBytesWritable, Result)] = spark.sparkContext.newAPIHadoopRDD(hConf, classOf[TableInputFormat], classOf[ImmutableBytesWritable], classOf[Result])
 
     rawRDD.map(res => toT(res._2))
   }
 
-  def getRawRDD(
-              tableName: String,
-              startRow: String,
-              stopRow: String
-            ): RDD[(ImmutableBytesWritable, Result)] = {
+  def getRawRDD(spark: SparkSession,
+                 tableName: String,
+                 startRow: String,
+                 stopRow: String
+               ): RDD[(ImmutableBytesWritable, Result)] = {
     val hConf = HBaseConfiguration.create()
     hConf.set("hbase.mapreduce.inputtable", tableName)
     hConf.addResource("core-site.xml")
     hConf.addResource("hbase-site.xml")
     hConf.addResource("hdfs-site.xml")
-//    hConf.set("hbase.zookeeper.quorum", ConfigurationHelper.hbaseIp)
-//    hConf.set("hbase.zookeeper.property.clientPort", ConfigurationHelper.hbasePort)
-//    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
+    //    hConf.set("hbase.zookeeper.quorum", ConfigurationHelper.hbaseIp)
+    //    hConf.set("hbase.zookeeper.property.clientPort", ConfigurationHelper.hbasePort)
+    //    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
     hConf.set("hbase.mapreduce.scan.row.start", startRow)
     hConf.set("hbase.mapreduce.scan.row.stop", stopRow)
-    sparkContext.newAPIHadoopRDD(hConf, classOf[TableInputFormat], classOf[ImmutableBytesWritable], classOf[Result])
+    spark.sparkContext.newAPIHadoopRDD(hConf, classOf[TableInputFormat], classOf[ImmutableBytesWritable], classOf[Result])
   }
 
-  def getRDD(
+  def getRDD(spark: SparkSession,
               tableName: String,
               columnFamily: String,
               qualifier: String,
               startRow: String,
               stopRow: String
             ): RDD[String] = {
-    getRDD[String](tableName, columnFamily, qualifier, startRow, stopRow, (x: Array[Byte]) => Bytes.toString(x))
+    getRDD[String](spark,tableName, columnFamily, qualifier, startRow, stopRow, (x: Array[Byte]) => Bytes.toString(x))
   }
 
-  def getRDD[T: ClassTag](
-              tableName: String,
-              startRow: String,
-              stopRow: String,
-              toT: Result => T
-            ): RDD[T] = {
-    val rawRDD = getRawRDD(tableName, startRow, stopRow)
+  def getRDD[T: ClassTag](spark: SparkSession,
+                           tableName: String,
+                           startRow: String,
+                           stopRow: String,
+                           toT: Result => T
+                         ): RDD[T] = {
+    val rawRDD = getRawRDD(spark,tableName, startRow, stopRow)
     rawRDD.map(data => {
       toT(data._2)
     })
@@ -148,13 +188,13 @@ object SparkHbaseHelper {
   def res2StrMap(res: Result): Map[String, String] = {
     val cells = res.rawCells()
     cells.map(cell => {
-      ( Bytes.toString(cloneQualifier(cell)), Bytes.toString(cloneValue(cell)) )
+      (Bytes.toString(cloneQualifier(cell)), Bytes.toString(cloneValue(cell)))
     }).toMap
   }
 
   def res2MapWithCF(res: Result): Map[String, Array[Byte]] = {
     val cells = res.rawCells()
-    cells.map(cell =>{
+    cells.map(cell => {
       (Bytes.toString(cloneFamily(cell)) + ":" + Bytes.toString(cloneQualifier(cell)), cloneValue(cell))
     }).toMap
   }
@@ -173,7 +213,7 @@ object SparkHbaseHelper {
 
   // (唯一的column value, row-Key)
   // 给 master table 2.0 使用 -- Bin
-  def singleColumnAndRK(res: Result) : (String, String) = {
+  def singleColumnAndRK(res: Result): (String, String) = {
     val cells: Array[Cell] = res.rawCells()
     if (cells.isEmpty) {
       ("", Bytes.toString(res.getRow))
@@ -192,33 +232,52 @@ object SparkHbaseHelper {
     (new ImmutableBytesWritable, p)
   }
 
-//  def putRDD[A <: Any](
-//            tableName: String,
-//            columnFamily: String,
-//            data: RDD[(String, Map[String, A])]
-//            ): Unit = {
-//    putRDD(tableName, columnFamily, data, keyMap2Put)
-//  }
+  //  def putRDD[A <: Any](
+  //            tableName: String,
+  //            columnFamily: String,
+  //            data: RDD[(String, Map[String, A])]
+  //            ): Unit = {
+  //    putRDD(tableName, columnFamily, data, keyMap2Put)
+  //  }
 
   def putRDD[A <: Any](
-                      tableName: String,
-                      data: RDD[(String, Map[String, A])]
+                        tableName: String,
+                        data: RDD[(String, Map[String, A])]
                       ): Unit = {
     putRDD(tableName, data, cfkMap2Put(_: (String, Map[String, A])))
   }
 
+
+  /**
+   *
+   * val func = (user: UserData) =>{
+   * val rowKey =  Generators.timeBasedGenerator().generate().toString
+   * val put = new Put(Bytes.toBytes(rowKey))
+   *       put.addColumn(Bytes.toBytes("cf"), Bytes.toBytes("uid"), Bytes.toBytes(user.uid))
+   *       put.addColumn(Bytes.toBytes("cf"), Bytes.toBytes("sex"), Bytes.toBytes(user.sex))
+   *       put.addColumn(Bytes.toBytes("cf"), Bytes.toBytes("age"), Bytes.toBytes(user.age))
+   *       put.addColumn(Bytes.toBytes("cf"), Bytes.toBytes("created_time"), Bytes.toBytes(user.created_time))
+   *
+   * (new ImmutableBytesWritable, put)
+   * }
+   *
+   * @param tableName
+   * @param data
+   * @param t
+   * @tparam T
+   */
   def putRDD[T](
-               tableName: String,
-               data: RDD[T],
-               t: T => (ImmutableBytesWritable, Put)
+                 tableName: String,
+                 data: RDD[T],
+                 t: T => (ImmutableBytesWritable, Put)
                ): Unit = {
     val hConf = HBaseConfiguration.create()
-    hConf.addResource("core-site.xml")
-    hConf.addResource("hbase-site.xml")
-    hConf.addResource("hdfs-site.xml")
-//    hConf.set("hbase.zookeeper.quorum", ConfigurationHelper.hbaseIp)
-//    hConf.set("hbase.zookeeper.property.clientPort", ConfigurationHelper.hbasePort)
-//    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
+//    hConf.addResource("core-site.xml")
+//    hConf.addResource("hbase-site.xml")
+//    hConf.addResource("hdfs-site.xml")
+        hConf.set("hbase.zookeeper.quorum", "localhost")
+        hConf.set("hbase.zookeeper.property.clientPort", "2181")
+    //    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
     hConf.set("hbase.mapred.outputtable", tableName)
     hConf.set("mapreduce.output.fileoutputformat.outputdir", "./tmp")
     val job = Job.getInstance(hConf)
@@ -229,26 +288,26 @@ object SparkHbaseHelper {
   }
 
   def putRDD[T](
-            tableName: String,
-            columnFamily: String,
-            data: RDD[T],
-            t: (T, String) => (ImmutableBytesWritable, Put)
-            ): Unit = {
+                 tableName: String,
+                 columnFamily: String,
+                 data: RDD[T],
+                 t: (T, String) => (ImmutableBytesWritable, Put)
+               ): Unit = {
     val hConf = HBaseConfiguration.create()
     hConf.addResource("core-site.xml")
     hConf.addResource("hbase-site.xml")
     hConf.addResource("hdfs-site.xml")
-//    hConf.set("hbase.zookeeper.quorum", ConfigurationHelper.hbaseIp)
-//    hConf.set("hbase.zookeeper.property.clientPort", ConfigurationHelper.hbasePort)
-//    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
+    //    hConf.set("hbase.zookeeper.quorum", ConfigurationHelper.hbaseIp)
+    //    hConf.set("hbase.zookeeper.property.clientPort", ConfigurationHelper.hbasePort)
+    //    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
     hConf.set("hbase.mapred.outputtable", tableName)
     hConf.set("mapreduce.output.fileoutputformat.outputdir", "./tmp")
     val job = Job.getInstance(hConf)
     job.setOutputFormatClass(classOf[TableOutputFormat[ImmutableBytesWritable]])
     job.setOutputKeyClass(classOf[ImmutableBytesWritable])
     job.setOutputValueClass(classOf[Result])
-//    logger.warn(s"ip = ${ConfigurationHelper.hbaseIp}, port = ${ConfigurationHelper.hbasePort}, znode = ${ConfigurationHelper.hbaseZnode}" +
-//      s", tableName = ${tableName}, cf = ${columnFamily}.")
+    //    logger.warn(s"ip = ${ConfigurationHelper.hbaseIp}, port = ${ConfigurationHelper.hbasePort}, znode = ${ConfigurationHelper.hbaseZnode}" +
+    //      s", tableName = ${tableName}, cf = ${columnFamily}.")
     data.map(x => t(x, columnFamily)).saveAsNewAPIHadoopDataset(job.getConfiguration)
   }
 
@@ -291,30 +350,30 @@ object SparkHbaseHelper {
   }
 
   def getDF[A <: Any](
-              rdd: RDD[A],
-              columnInfo: List[ColumnInfo],
-              t2Row: (A, List[ColumnInfo]) => Row,
-              schema: StructType,
-              session: Option[SparkSession]
-              ): DataFrame = {
-    val ss = session.fold(SparkConfig.spark){x => x}
+                       rdd: RDD[A],
+                       columnInfo: List[ColumnInfo],
+                       t2Row: (A, List[ColumnInfo]) => Row,
+                       schema: StructType,
+                       session: Option[SparkSession]
+                     ): DataFrame = {
+    val ss = session.fold(SparkConfig.spark) { x => x }
     ss.createDataFrame(rdd.map(z => t2Row(z, columnInfo)), schema)
   }
 
   def getDF(
-           rdd: RDD[Map[String, Array[Byte]]],
-           columnInfo: List[ColumnInfo],
-           session: Option[SparkSession]
+             rdd: RDD[Map[String, Array[Byte]]],
+             columnInfo: List[ColumnInfo],
+             session: Option[SparkSession]
            ): DataFrame = {
     val schema = columnInfo2Schema(columnInfo)
     getDF[Map[String, Array[Byte]]](rdd, columnInfo, rawMap2Row, schema, session)
   }
 
   def getDFWithK(
-           rdd: RDD[(String, Map[String, Array[Byte]])],
-           columnInfo: List[ColumnInfo],
-           session: Option[SparkSession]
-           ): DataFrame = {
+                  rdd: RDD[(String, Map[String, Array[Byte]])],
+                  columnInfo: List[ColumnInfo],
+                  session: Option[SparkSession]
+                ): DataFrame = {
     val newColumnInfo = ColumnInfo("", "ROWKEY") :: columnInfo
     val schema = columnInfo2Schema(newColumnInfo)
     getDF[(String, Map[String, Array[Byte]])](rdd, newColumnInfo, rawMapWithK2Row, schema, session)
@@ -323,7 +382,7 @@ object SparkHbaseHelper {
 
   //Should you need original row key to be added to dataframe, prepend a `ROWKEY` typed columnInfo to the list.
   def columnInfo2Schema(
-                       columnInfo: List[ColumnInfo]
+                         columnInfo: List[ColumnInfo]
                        ): StructType = {
     StructType(
       columnInfo.map(z => ColumnInfo(z.columnName.replaceAll("`", ""), z.columnType)).map(ci => {
@@ -343,8 +402,8 @@ object SparkHbaseHelper {
   }
 
   def rawMapWithK2Row(
-                     data:(String, Map[String, Array[Byte]]),
-                     columnInfo: List[ColumnInfo]
+                       data: (String, Map[String, Array[Byte]]),
+                       columnInfo: List[ColumnInfo]
                      ): Row = {
     Row.fromSeq(columnInfo.map(z => ColumnInfo(z.columnName.replaceAll("`", ""), z.columnType)).map(x => {
       x.columnType match {
@@ -396,16 +455,16 @@ object SparkHbaseHelper {
     hConf.addResource("core-site.xml")
     hConf.addResource("hbase-site.xml")
     hConf.addResource("hdfs-site.xml")
-//    hConf.set("hbase.zookeeper.quorum", ConfigurationHelper.hbaseIp)
-//    hConf.set("hbase.zookeeper.property.clientPort", ConfigurationHelper.hbasePort)
-//    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
+    //    hConf.set("hbase.zookeeper.quorum", ConfigurationHelper.hbaseIp)
+    //    hConf.set("hbase.zookeeper.property.clientPort", ConfigurationHelper.hbasePort)
+    //    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
     hConf.set("hbase.mapred.outputtable", tableName)
     hConf.set("mapreduce.output.fileoutputformat.outputdir", "./tmp")
     val job = Job.getInstance(hConf)
     job.setOutputFormatClass(classOf[TableOutputFormat[ImmutableBytesWritable]])
     job.setOutputKeyClass(classOf[ImmutableBytesWritable])
     job.setOutputValueClass(classOf[Result])
-    rows.map( (rk: String) => {
+    rows.map((rk: String) => {
       val del = new Delete(Bytes.toBytes(rk))
       (new ImmutableBytesWritable, del)
     }).saveAsNewAPIHadoopDataset(job.getConfiguration)
@@ -419,9 +478,9 @@ object SparkHbaseHelper {
     hConf.addResource("core-site.xml")
     hConf.addResource("hbase-site.xml")
     hConf.addResource("hdfs-site.xml")
-//    hConf.set("hbase.zookeeper.quorum", ConfigurationHelper.hbaseIp)
-//    hConf.set("hbase.zookeeper.property.clientPort", ConfigurationHelper.hbasePort)
-//    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
+    //    hConf.set("hbase.zookeeper.quorum", ConfigurationHelper.hbaseIp)
+    //    hConf.set("hbase.zookeeper.property.clientPort", ConfigurationHelper.hbasePort)
+    //    hConf.set("zookeeper.znode.parent", ConfigurationHelper.hbaseZnode)
     hConf.set("hbase.mapred.outputtable", tableName)
     hConf.set("mapreduce.output.fileoutputformat.outputdir", "./tmp")
     val job = Job.getInstance(hConf)

@@ -111,8 +111,6 @@ object HBaseApi {
     }finally{
       if(table!=null)
         table.close()
-      scanner.close()
-
 
     }
   }
@@ -123,7 +121,7 @@ object HBaseApi {
     //val sc = new SparkContext(sparkConf)
     //创建一个配置，采用的是工厂方法
     val conf = HBaseConfiguration.create()
-    val tablename = "user_hbase10"
+    val tablename = "ods:user_hbase4"
     conf.set("hbase.zookeeper.property.clientPort", "2181")
     conf.set("zookeeper.znode.parent", "/hbase")
     conf.set("hbase.zookeeper.quorum", "cdh1,cdh2,cdh3")
@@ -139,13 +137,13 @@ object HBaseApi {
 //        createHTable(connection, "blog")
         //插入数据,重复执行为覆盖
 
-        insertHTable(connection,"blog","artitle","engish","002","c++ for me")
-        insertHTable(connection,"blog","artitle","engish","003","python for me")
-        insertHTable(connection,"blog","artitle","chinese","002","C++ for china")
+//        insertHTable(connection,"blog","artitle","engish","002","c++ for me")
+//        insertHTable(connection,"blog","artitle","engish","003","python for me")
+//        insertHTable(connection,"blog","artitle","chinese","002","C++ for china")
         //删除记录
         // deleteRecord(connection,"blog","artitle","chinese","002")
         //扫描整个表
-        scanRecord(connection,"blog","artitle","engish")
+        scanRecord(connection,tablename,"cf","age")
         //删除表测试
         // deleteHTable(connection, "blog")
       }finally {
